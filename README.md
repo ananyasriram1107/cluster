@@ -1,0 +1,1 @@
+An AI‑powered learning assistant that tracks student progress, groups learners intelligently, predicts goal achievement, and provides personalized academic guidance using peer patterns and historical performance.
