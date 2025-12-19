@@ -6,12 +6,12 @@ import os
 from datetime import datetime
 
 from ai.clustering import assign_cluster
-from ai.analytics import analyze_patterns, goal_prediction
+from ai.analytics import analyze_patterns, goal_prediction, predict_improvement, calculate_increments
 from db.database import init_db
 
 # ---------- CONFIG ----------
 st.set_page_config(page_title="AI Learning Engine", layout="wide")
-st.title("🧠 AI Learning Engine: Memory & Goal Tracking")
+st.title("AI Learning Engine: Memory & Goal Tracking")
 
 # ---------- DATABASE ----------
 conn = init_db()
@@ -19,13 +19,17 @@ conn = init_db()
 # ---------- DATA ----------
 @st.cache_data
 def load_baseline():
-    if os.path.exists('data/Student_Performance.csv'):
-        return pd.read_csv('data/Student_Performance.csv')
-    else:
-        return pd.DataFrame({
-            'math score': np.random.randint(30, 100, 1000),
-            'reading score': np.random.randint(30, 100, 1000)
-        })
+    if os.path.exists('data/student.csv'):
+        try:
+            df = pd.read_csv('data/student.csv')
+            if not df.empty and 'math score' in df.columns and 'reading score' in df.columns:
+                return df
+        except pd.errors.EmptyDataError:
+            pass
+    return pd.DataFrame({
+        'math score': np.random.randint(30, 100, 1000),
+        'reading score': np.random.randint(30, 100, 1000)
+    })
 
 df_baseline = load_baseline()
 
@@ -66,11 +70,11 @@ with col1:
         marker=dict(size=18, color='gold', symbol='star'),
         name="YOU"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 with col2:
     st.subheader("🕵️ Pattern Sensing")
-    msg, velocity, current_math = analyze_patterns(history_df)
+    msg, velocity, current_math, current_reading = analyze_patterns(history_df)
     st.write(msg)
 
     st.divider()
@@ -83,9 +87,101 @@ with col2:
         st.success(f"🎯 Goal achievable in ~{sessions} sessions")
     else:
         st.info("Increase learning velocity to estimate goal.")
+    
+# ---------- CHATBOT ----------
+st.markdown("---")
+st.subheader("🤖 Study Analysis Chatbot")
+
+def analyze_student_level(history_df, current_math, current_reading, velocity):
+    if history_df.empty:
+        return "Not enough data yet. Please log some assessments to get personalized analysis."
+    
+    avg_math = history_df['math'].mean()
+    avg_reading = history_df['reading'].mean()
+    
+    # Determine level based on average scores
+    if avg_math < 50 or avg_reading < 50:
+        level = "Beginner"
+    elif avg_math < 80 or avg_reading < 80:
+        level = "Intermediate"
+    else:
+        level = "Advanced"
+    
+    # Analyze patterns
+    math_scores = history_df['math'].tolist()
+    reading_scores = history_df['reading'].tolist()
+    
+    math_trend = "improving" if len(math_scores) > 1 and math_scores[-1] > math_scores[0] else "stable"
+    reading_trend = "improving" if len(reading_scores) > 1 and reading_scores[-1] > reading_scores[0] else "stable"
+    
+    # Identify weaknesses
+    weak_subject = "Math" if avg_math < avg_reading else "Reading"
+    
+    # Recommendations based on level and weakness
+    recommendations = {
+        "Beginner": {
+            "Math": ["Khan Academy: Basic Math Fundamentals", "Math Workbook for Beginners", "YouTube: Math Antics Series"],
+            "Reading": ["Reading A-Z: Comprehension Basics", "Vocabulary.com App", "Books: 'The Very Hungry Caterpillar' for practice"]
+        },
+        "Intermediate": {
+            "Math": ["Khan Academy: Algebra and Geometry", "Online Course: Mathway Tutorials", "Book: 'Algebra for Dummies'"],
+            "Reading": ["SparkNotes: Literature Guides", "Grammarly for Writing Practice", "Book: 'How to Read a Book' by Mortimer Adler"]
+        },
+        "Advanced": {
+            "Math": ["Khan Academy: Calculus and Advanced Topics", "Problem Sets from MIT OpenCourseWare", "Book: 'Calculus' by James Stewart"],
+            "Reading": ["The New York Times: Daily Articles", "Critical Thinking Exercises", "Book: 'The Elements of Style' by Strunk and White"]
+        }
+    }
+    
+    recs = recommendations[level][weak_subject]
+    
+    # Velocity-based advice
+    if velocity > 0:
+        velocity_advice = f"Your learning velocity is positive ({velocity} points per session). Keep it up!"
+    elif velocity < 0:
+        velocity_advice = f"Your velocity is negative ({velocity}). Focus on reviewing mistakes and consistent practice."
+    else:
+        velocity_advice = "Your scores are stable. Try increasing study intensity to see improvement."
+    
+    return f"""
+**Student Level Analysis:**
+
+- **Overall Level:** {level}
+- **Average Math Score:** {avg_math:.1f}
+- **Average Reading Score:** {avg_reading:.1f}
+- **Math Trend:** {math_trend}
+- **Reading Trend:** {reading_trend}
+- **Weakest Subject:** {weak_subject}
+
+**Recommendations for Improvement:**
+- **Study Materials for {weak_subject}:**
+  {chr(10).join(f"  • {rec}" for rec in recs)}
+- **Additional Advice:** {velocity_advice}
+- **General Tip:** Practice daily, review errors, and use active recall techniques.
+"""
+
+if st.button("Analyze My Level & Get Recommendations"):
+    analysis = analyze_student_level(history_df, current_math, current_reading, velocity)
+    st.write(analysis)
 
 # ---------- HISTORY ----------
 st.markdown("---")
 if not history_df.empty:
     st.subheader("📜 Learning Timeline")
     st.line_chart(history_df.set_index('date')[['math', 'reading']])
+    
+    # Prediction Facility
+    st.subheader("🔮 Improvement Prediction")
+    sessions_ahead = st.slider("Predict score after how many sessions?", 1, 20, 5)
+    predicted_math = predict_improvement(current_math, velocity, sessions_ahead)
+    predicted_reading = predict_improvement(current_reading, velocity, sessions_ahead)
+    st.write(f"Predicted Math Score after {sessions_ahead} sessions: {predicted_math:.1f}")
+    st.write(f"Predicted Reading Score after {sessions_ahead} sessions: {predicted_reading:.1f}")
+    
+    # Increment/Decrement Graph
+    st.subheader("📈 Session-to-Session Increments")
+    increments_df = calculate_increments(history_df)
+    if not increments_df.empty:
+        st.bar_chart(increments_df.set_index('session')[['math_increment', 'reading_increment']])
+    else:
+        st.write("Need more data points for increment analysis.")
